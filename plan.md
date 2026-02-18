@@ -6,6 +6,7 @@
 - Read SRT file
 - function to get timings
 - function to clip audio
+- Add delete if exists functionality
 
 2. Create user interface
 - bootstrap

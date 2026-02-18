@@ -20,7 +20,7 @@ const test_pool = async () => {
 
 const test_compressor = async () => {
     CompressAudio.compress({
-        filePath: path.join(__dirname, './utils/data/game.mkv'),
+        filePath: path.join(__dirname, './utils/data/test.mp4'),
         poolSize: 1
     });
 }

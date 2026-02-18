@@ -1,5 +1,5 @@
 const fs = require('fs/promises');
-const { createReadStream, createWriteStream } = require('fs')
+const { createReadStream, exists } = require('fs')
 const { parse } = require('subtitle');
 const path = require('path')
 const ThreadPool = require('./ThreadPool');
@@ -93,29 +93,27 @@ class CompressAudio {
 				this.#showError(new Error(`No subtitles found corresponding to the file ${filePath}`))
 			}
 			const subtitles = await this.#readSubtitles(subPath);
-			const timingsPath = '';
-			await this.#createTimingsFile(filePath, outputPath, subtitles)
-			let clipPromises = [];
-			for(let idx = 0; idx < subtitles.length; idx++) {
-				clipPromises.push(this.pool.addTask({
-					id: idx,
-					filePath: filePath,
-					subtitle: subtitles[idx]
-				}));
-			}
-			await Promise.all(clipPromises).then((output) => {
-				console.log(output);
-			});
-			// finish thread side and combine results
-			// ...
-			resolve()
+			const timingsPath = await this.#createTimingsFile(filePath, subtitles)
+			
+			const { outputPath } = await this.pool.addTask({
+				filePath: filePath,
+				timingsPath: timingsPath,
+				audioFormat: this.config.outputAudioFormat
+			}).catch(this.#showError);
+			console.log(outputPath)
+			console.log('Removing files');
+			await fs.unlink(timingsPath);
+			console.log('file deleted');
+			resolve(outputPath)
 		});
 	}
 
-	static async #createTimingsFile(inputPath, outputPath, subtitles) {
-		return new Promise((resolve, reject) => {
-			if(fs.exists(outputPath, (exists) => {
-				if(!exists) {
+	static async #createTimingsFile(inputPath, subtitles) {
+		return new Promise(async (resolve, reject) => {
+			const { name, dir } = path.parse(inputPath);
+			const outputPath = path.join(dir, `${name}-timings.txt`);
+			if(exists(outputPath, async (exists) => {
+				if(exists) {
 					reject(new Error(`File exists: ${outputPath}`));
 				}
 				let output = '';
@@ -124,8 +122,9 @@ class CompressAudio {
 					output += `inpoint ${subtitle.start / 1000}\n`;
 					output += `outpoint ${subtitle.end / 1000}\n`;
 				});
-				console.log(output);
-				// fs.writeFile(outputPath, )
+				await fs.writeFile(outputPath, output)
+				.catch((err) => this.#showError);
+				resolve(outputPath);
 			}));
 		});
 	}

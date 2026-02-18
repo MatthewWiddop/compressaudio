@@ -1,23 +1,25 @@
-const ffmpeg = require('ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
 const { parse, join } = require('path')
 const { parentPort } = require('worker_threads');
+const { exec } = require('child_process');
 
-parentPort.on('message', async ({id, filePath, subtitle}) => {
+const fs = require('fs');
+
+parentPort.on('message', async ({filePath, timingsPath, audioFormat}) => {
     const {dir, name} = parse(filePath);
-    const outputPath = join(dir, name + id + '.avi');
-    await new ffmpeg(filePath)
-    .then((video) => {
-        video.setDisableVideo();
-        video.setVideoStartTime(subtitle.start / 1000);
-        video.setVideoDuration((subtitle.end - subtitle.start) / 1000);
-        video.addCommand('-threads', '2');
-        video.save(outputPath); // no need to access output path
-    }).then(() => {
-        parentPort.postMessage({ data: { 
-            message: 'Task completed!',
-            outputPath: outputPath
-        }});
-    }).catch((err) => {
-        parentPort.postMessage({ error: err });
+    const outputPath = join(dir, name + '.' + audioFormat);
+    exec(`${ffmpegPath} -f concat -safe 0 -threads 1 -i ${timingsPath} ${outputPath}`, 
+        {
+            maxBuffer: 1024 * 1024 * 10
+        }, (err) => {
+        if(err) {
+            parentPort.postMessage({ error: err });
+        }
+        else {
+            parentPort.postMessage({ data: { 
+                message: 'Task completed!',
+                outputPath: outputPath
+            }});
+        }
     });
 });
