@@ -103,8 +103,7 @@ class ThreadPool {
             })
         );
 
-        const output = await Promise.all(remainingPromises);
-        console.log(output)
+        await Promise.all(remainingPromises);
         
         this.workers.map((worker) => {
             worker.terminate();

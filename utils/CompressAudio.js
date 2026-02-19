@@ -1,5 +1,5 @@
 const fs = require('fs/promises');
-const { createReadStream, exists } = require('fs')
+const { createReadStream } = require('fs')
 const { parse } = require('subtitle');
 const path = require('path')
 const ThreadPool = require('./ThreadPool');
@@ -14,9 +14,8 @@ class CompressAudio {
 	}
 
 	static #isDirectory = async path => {
-		fs.stat(path, async (_, stats) => {
-			return stats.isDirectory();
-		}).catch(this.#showError);
+		const stats = await fs.stat(path).catch(this.#showError);
+		return stats.isDirectory();
 	}
 
 	static isSupportedAudioFileType = filePath => {
@@ -68,79 +67,62 @@ class CompressAudio {
 			if(this.isSupportedAudioFileType(config.filePath)) {
 				await this.#compressFile(config.filePath);
 			}
+			else {
+				this.#showError(new Error(`Not a supported file type: ${config.filePath}`));
+			}
 		}
 		this.pool.exit();
 	}
 	
 	static async #parseDirectory(dirPath) {
-		return fs.readdir(dirPath, (_, files) => 
-			files.filter((file) => {
-				this.isSupportedAudioFileType(file);
-			})
-		).then(async (files) => {
-			const filePromises = []
-			for(let idx = 0; idx < files.length; idx++) {
-				await this.#compressFile(files[idx]);		
-			}
-			await Promise.all(filePromises)
-		}).catch(this.#showError);
+		const allFiles = await fs.readdir(dirPath).catch(this.#showError);
+		const audioFiles = allFiles.filter((file) => this.isSupportedAudioFileType(file));
+		const filePromises = []
+		for(let idx = 0; idx < audioFiles.length; idx++) {
+			filePromises.push(this.#compressFile(path.join(dirPath, audioFiles[idx])));
+		}
+		await Promise.all(filePromises)
 	}
 	
 	static async #compressFile(filePath) {
-		return new Promise(async (resolve) => {
-			const subPath = await this.#findCorrespondingSubtitles(filePath);
-			if(!subPath) {
-				this.#showError(new Error(`No subtitles found corresponding to the file ${filePath}`))
-			}
-			const subtitles = await this.#readSubtitles(subPath);
-			const timingsPath = await this.#createTimingsFile(filePath, subtitles)
-			
-			const { outputPath } = await this.pool.addTask({
-				filePath: filePath,
-				timingsPath: timingsPath,
-				audioFormat: this.config.outputAudioFormat
-			}).catch(this.#showError);
-			console.log(outputPath)
-			console.log('Removing files');
-			await fs.unlink(timingsPath);
-			console.log('file deleted');
-			resolve(outputPath)
-		});
+		const subPath = await this.#findCorrespondingSubtitles(filePath);
+		const subtitles = await this.#readSubtitles(subPath).catch(this.#showError);
+		const timingsPath = await this.#createTimingsFile(filePath, subtitles);
+		const { outputPath } = await this.pool.addTask({
+			filePath: filePath,
+			timingsPath: timingsPath,
+			audioFormat: this.config.outputAudioFormat
+		}).catch(this.#showError);
+		await fs.unlink(timingsPath);
+		return outputPath;
 	}
 
 	static async #createTimingsFile(inputPath, subtitles) {
-		return new Promise(async (resolve, reject) => {
-			const { name, dir } = path.parse(inputPath);
-			const outputPath = path.join(dir, `${name}-timings.txt`);
-			if(exists(outputPath, async (exists) => {
-				if(exists) {
-					reject(new Error(`File exists: ${outputPath}`));
-				}
-				let output = '';
-				subtitles.forEach(subtitle => {
-					output += `file ${inputPath}\n`;
-					output += `inpoint ${subtitle.start / 1000}\n`;
-					output += `outpoint ${subtitle.end / 1000}\n`;
-				});
-				await fs.writeFile(outputPath, output)
-				.catch((err) => this.#showError);
-				resolve(outputPath);
-			}));
+		const { name, dir } = path.parse(inputPath);
+		const outputPath = path.join(dir, `${name}-timings.txt`);
+		console.log(outputPath)
+		let output = '';
+		subtitles.forEach(subtitle => {
+			output += `file ${inputPath}\n`;
+			output += `inpoint ${subtitle.start / 1000}\n`;
+			output += `outpoint ${subtitle.end / 1000}\n`;
 		});
+		await fs.writeFile(outputPath, output)
+		.catch(this.#showError);
+		return outputPath;
 	}
 	
 	static async #findCorrespondingSubtitles(filePath) {
 		const {name, dir} = path.parse(filePath);
-		return fs.readdir(dir).then((files) => {
-			for(let idx = 0; idx < files.length; idx++) {
-				var file = files[idx];
-				if(this.isSupportedSubtitleFileType(file) &&
+		const files = await fs.readdir(dir).catch(this.#showError);
+		for(let idx = 0; idx < files.length; idx++) {
+			var file = files[idx];
+			if(this.isSupportedSubtitleFileType(file) &&
 				path.parse(file).name == name) {
-					return path.join(dir, file);
-				}
+				return path.join(dir, file);
 			}
-			return '';
-		}).catch(this.#showError);
+		}
+		return '';
 	}
 
 	static async #readSubtitles(subPath) {
@@ -155,6 +137,7 @@ class CompressAudio {
 				.on('finish', () => {
 					resolve(chunks);
 				});
+
 		})
 	}
 }
