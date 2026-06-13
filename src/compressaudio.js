@@ -58,12 +58,4 @@ program
     }
   });
 
-// todo:
-// - add option to adjust subtitle timings (and option to skip)
-// - test the code, for both routes:
-// + random string input
-// + valid path with no subtitle file 
-// + valid path and subtitle file format
-// + valid file and other subtitle format
-
 program.parse();
