@@ -20,7 +20,7 @@ const listSubtitle = () => {
 
 program
   .name('compressaudio')
-  .description('Compress audio based on subtitles')
+  .description('A tool that compresses audio files by using subtitles to retain only the spoken segments.')
   .version('0.1.0');
 
 program
