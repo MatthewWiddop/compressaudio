@@ -4,11 +4,12 @@ const fs = require('fs');
 const ThreadPool = require('./ThreadPool');
 const getProgressTracker = require('./getProgressTracker');
 
+const fileTypePath = './filetypes.json';
+const fileTypes = require(fileTypePath);
+
 class Compressor {
-  static fileTypePath = './filetypes.json';
-	static getSupportedAudioFileTypes = () => require(this.fileTypePath).audio;
-	static getSupportedSubtitleFileTypes = () => require(this.fileTypePath).subtitle;
-  static #MAX_THREADS = 4;
+	static getSupportedAudioFileTypes = () => fileTypes.audio;
+	static getSupportedSubtitleFileTypes = () => fileTypes.subtitle;
 
   static #isSupportedFile(file, types) {
     return types.some(type => endsWith(file, type));
@@ -36,9 +37,7 @@ class Compressor {
 
   static #getFileQueueEntry(entry, emit) {
     const filePath = path.join(entry.parentPath, entry.name);
-    if (!entry.isFile() || !this.isSupportedAudioFile(filePath)) {
-      return false;
-    }
+    if (!entry.isFile() || !this.isSupportedAudioFile(filePath)) return false;
     const filename = path.parse(entry.name).name;
     const subtitlePath = this.#findCorrespondingSubtitleFile(entry.parentPath, filename);
     if (!subtitlePath) {
@@ -76,7 +75,7 @@ class Compressor {
           stage: 'searching directory',
         });
       });
-    if (fileQueue.length == 0) {
+    if (fileQueue.length === 0) {
       emit({
         type: 'error',
         code: 'File not Found',
@@ -88,14 +87,14 @@ class Compressor {
     return fileQueue;
 	}
 
-	static async #readSubtitles(fileQueue, emit) {
+	static async #readSubtitles(fileQueue, emit, options) {
     emit({
       type: 'status',
       message: 'Reading subtitles...',
       stage: 'parsing subtitles'
     });
     const subtitleParser = path.join(__dirname, 'workers/subtitleParser.js');
-    const pool = new ThreadPool({ filename: subtitleParser, size: this.#MAX_THREADS });
+    const pool = new ThreadPool({ filename: subtitleParser, size: options.threads || 4 });
     const incrementProgressbar = getProgressTracker(fileQueue.length, emit, 'parsing subtitles');
     const tasks = fileQueue.map(item => 
       pool.addTask(item)
@@ -117,31 +116,34 @@ class Compressor {
     return filesWithTimings;
 	}
 
-  static async #encodeAudio(encodingTasks, emit) {
+  static async #encodeAudio(encodingTasks, emit, options) {
     emit({
       type: 'status',
       message: 'Encoding audio...',
       stage: 'encoding audio'
     });
     const encoder = path.join(__dirname, 'workers/encoder.js');
-    const pool = new ThreadPool({ filename: encoder, size: this.#MAX_THREADS });
+    const pool = new ThreadPool({ filename: encoder, size: options.threads || 4 });
     const incrementProgressbar = getProgressTracker(encodingTasks.length, emit, 'encoding audio');
     const tasks = encodingTasks.map(task =>
       pool.addTask(task)
         .then(() => { incrementProgressbar() }) 
     );
 
-    await Promise
-      .all(tasks)
-      .catch(err => {
-        emit({
-          type: 'error',
-          code: 'Encoding error',
-          message: err.message,
-          stage: 'audio encoding'
+    try {
+      await Promise
+        .all(tasks)
+        .catch(err => {
+          emit({
+            type: 'error',
+            code: 'Encoding error',
+            message: err.message,
+            stage: 'audio encoding'
+          });
         });
-      });
-    await pool.exit();
+    } finally {
+      await pool.exit();
+    }
   }
 
   static #getEncodingTasks(filesWithTimings, outputDir, outputFormat) {
@@ -210,41 +212,48 @@ class Compressor {
     }
     return true;
   }
-
-  static async compressDirectory(file, output, outputFormat, emit) {
-    const dirPath = path.resolve(file);
-    const outputDir = path.resolve(output);
-    const validDirectory = await this.#validateInputDirectory(outputDir, emit);
-    if (!validDirectory) {
-      return;
+  
+  static async #validateOutputDirectory(dirPath, emit) {
+    const directoryExists = await isDirectory(dirPath)
+    if (!directoryExists) {
+      emit({
+        type: 'warning',
+        code: 'File not Found',
+        message: `No output directory was found at the specified path.\nPath: ${dirPath}\nCreating output directory`,
+        stage: 'initialisation'
+      });
+      await fs.promises.mkdir(dirPath, { recursive: true });
     }
-
-    const fileQueue = await this.#parseDirectory(dirPath, emit);
-    if (!fileQueue) {
-      return;
-    }
-
-    const filesWithTimings = await this.#readSubtitles(fileQueue, emit);
-    if (!filesWithTimings) {
-      return;
-    }
-
-    const encodingTasks = this.#getEncodingTasks(filesWithTimings, outputDir, outputFormat);
-    await this.#encodeAudio(encodingTasks, emit);
+    return true;
   }
 
-  static async compressSingleFile(file, output, emit) {
+  static async compressDirectory(file, output, outputFormat, emit, options) {
+    const dirPath = path.resolve(file);
+    const outputDir = path.resolve(output);
+    const validInputDirectory = await this.#validateInputDirectory(dirPath, emit);
+    if (!validInputDirectory) return;
+
+    const validateOutputDirectory = await this.#validateOutputDirectory(output, emit);
+    if (!validateOutputDirectory) return;
+
+    const fileQueue = await this.#parseDirectory(dirPath, emit);
+    if (!fileQueue) return;
+
+    const filesWithTimings = await this.#readSubtitles(fileQueue, emit, options);
+    if (!filesWithTimings) return;
+
+    const encodingTasks = this.#getEncodingTasks(filesWithTimings, outputDir, outputFormat);
+    await this.#encodeAudio(encodingTasks, emit, options);
+  }
+
+  static async compressSingleFile(file, output, emit, options) {
     const filePath = path.resolve(file);
     const validInput = await this.#validateInputFile(filePath, emit);
-    if (!validInput) {
-      return;
-    }
+    if (!validInput) return;
 
     const outputPath = path.resolve(output);
     const validOutput = await this.#validateOutputFile(outputPath, emit);
-    if (!validOutput) {
-      return;
-    }
+    if (!validOutput) return;
 
     const outputFormat = path.parse(outputPath).ext;
     const { dir: parentDir, name: filename } = path.parse(filePath);
@@ -260,14 +269,12 @@ class Compressor {
       return;
     }
 
-    const filesWithTimings = await this.#readSubtitles([{ filePath, subtitlePath }], emit);
-    if (!filesWithTimings) {
-      return;
-    }
+    const filesWithTimings = await this.#readSubtitles([{ filePath, subtitlePath }], emit, options);
+    if (!filesWithTimings) return;
     
     const outputDir = path.parse(outputPath).dir;
     const encodingTasks = this.#getEncodingTasks(filesWithTimings, outputDir, outputFormat)
-    await this.#encodeAudio(encodingTasks, emit);
+    await this.#encodeAudio(encodingTasks, emit, options);
   }
 }
 

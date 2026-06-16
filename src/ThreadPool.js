@@ -15,16 +15,16 @@ class ThreadPool {
   }
 
   validateConfig(config) {
-    if(!config.filename) {
+    if (!config.filename) {
       throw new Error('File path must be given');
     }
-    if(config.size && (!Number.isInteger(config.size) || config.size < 0)) {
-      throw new Error('Size must be greater than 0');
+    if (!Number.isInteger(config.size) || config.size <= 0) {
+      throw new Error('Size must be an integer greater than 0');
     }
   }
 
   initialise() {
-    for(let idx = 0; idx < this.config.size; idx++) {
+    for (let idx = 0; idx < this.config.size; idx++) {
       this.workers.push(this.createWorker());
     }
   }

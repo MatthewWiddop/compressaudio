@@ -72,12 +72,13 @@ const handleCompress = async (path, options) => {
   }
 
   const { dir, name } = parse(path);
+  const threadCount = Number(options.threads);
   if (options.directory) {
     const output = options.output || join(dir, name);
-    await Compressor.compressDirectory(path, output, options.format, emit);
+    await Compressor.compressDirectory(path, output, options.format, emit, { threads: threadCount });
   } else {
     const output = options.output || join(dir, name + options.format);
-    await Compressor.compressSingleFile(path, output, emit);
+    await Compressor.compressSingleFile(path, output, emit, { threads: threadCount });
   }
   multbar.stop();
 }
@@ -91,18 +92,19 @@ program
   .command('compress')
   .description('compress an audio file')
   .argument('<path>', 'path to the file or directory')
-  .option('-d --directory', 'indicates that the specified <path> is a directory', false)
-  .option('-f --format <format>', 'sets the output file format, ignored if -d is set', '.mp3')
-  .option('-o --output <output>', 'sets the output file or directory, defaults to <path>')
+  .option('-d, --directory', 'indicates that the specified <path> is a directory', false)
+  .option('-f, --format <format>', 'sets the output file format, ignored if -d is set', '.mp3')
+  .option('-o, --output <output>', 'sets the output file or directory, defaults to <path>')
+  .option('--threads <threads>', 'sets the number of worker threads to use when encoding', 4)
   .action(handleCompress);
 
 program
   .command('list')
   .description('list supported audio or subtitle formats')
-  .option('-a --audio', 'list supported audio formats')
-  .option('-s --subtitle', 'list supported subtitle formats')
+  .option('-a, --audio', 'list supported audio formats')
+  .option('-s, --subtitle', 'list supported subtitle formats')
   .action((options) => {
-    if (!options.audio || !options.subtitle) {
+    if (!options.audio && !options.subtitle) {
       console.error('Error: you must choose to list either audio or subtitle formats');
     }
     if (options.audio) {
