@@ -94,15 +94,15 @@ class Compressor {
       stage: 'parsing subtitles'
     });
     const subtitleParser = path.join(__dirname, 'workers/subtitleParser.js');
-    const pool = new ThreadPool({ filename: subtitleParser, size: options.threads || 4 });
     const incrementProgressbar = getProgressTracker(fileQueue.length, emit, 'parsing subtitles');
-    const tasks = fileQueue.map(item => 
-      pool.addTask(item)
-        .then((result) => { incrementProgressbar(); return result; })
-    );
+    const pool = new ThreadPool({ filename: subtitleParser, size: options.threads || 4 });
 
-    const filesWithTimings = await Promise
-      .all(tasks)
+    return Promise
+      .all(fileQueue.map(item => 
+        pool.addTask(item)
+          .then((result) => { incrementProgressbar(); return result; })
+      ))
+      .finally(() => { pool.exit(); })
       .catch(err => {
         emit({
           type: 'error',
@@ -111,9 +111,6 @@ class Compressor {
           stage: 'parsing subtitles',
         });
       });
-    
-    await pool.exit();
-    return filesWithTimings;
 	}
 
   static async #encodeAudio(encodingTasks, emit, options) {
@@ -125,25 +122,23 @@ class Compressor {
     const encoder = path.join(__dirname, 'workers/encoder.js');
     const pool = new ThreadPool({ filename: encoder, size: options.threads || 4 });
     const incrementProgressbar = getProgressTracker(encodingTasks.length, emit, 'encoding audio');
+
     const tasks = encodingTasks.map(task =>
       pool.addTask(task)
         .then(() => { incrementProgressbar() }) 
     );
 
-    try {
-      await Promise
-        .all(tasks)
-        .catch(err => {
-          emit({
-            type: 'error',
-            code: 'Encoding error',
-            message: err.message,
-            stage: 'audio encoding'
-          });
+    await Promise
+      .all(tasks)
+      .finally(() => { pool.exit(); })
+      .catch(err => {
+        emit({
+          type: 'error',
+          code: 'Encoding error',
+          message: err.message,
+          stage: 'audio encoding'
         });
-    } finally {
-      await pool.exit();
-    }
+      });
   }
 
   static #getEncodingTasks(filesWithTimings, outputDir, outputFormat) {
